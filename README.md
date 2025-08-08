@@ -1,4 +1,10 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app).
+TECH Stack:
+nextjs,
+Auth0,
+supabase,
+Gemini flash 2.5 api,
+TRCP
 
 ## Getting Started
 
