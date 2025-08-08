@@ -75,7 +75,7 @@ export default function LogInScreen({
               onClick={onSignUp}
               className="w-full rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm font-medium hover:bg-gray-50 focus:outline-none"
             >
-              Sign up — it's free
+              Sign up — it&apos;s free
             </button>
 
             <button
