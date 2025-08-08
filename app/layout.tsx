@@ -1,6 +1,4 @@
-
-// app/layout.tsx
-import './globals.css';
+import './globals'
 
 export const metadata = {
   title: 'Next.js',
