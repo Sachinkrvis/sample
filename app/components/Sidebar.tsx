@@ -11,24 +11,44 @@ import { BiLinkExternal } from "react-icons/bi";
 import { FiMessageSquare } from "react-icons/fi";
 import { MdLogout } from "react-icons/md";
 import { useUser } from "@auth0/nextjs-auth0";
+import { supabase } from "../lib/supabaseClient";
+
+interface ChatHistoryItem {
+  id: number;
+  prompt: string;
+  response: string;
+  created_at: string;
+}
 
 const Sidebar: React.FC = () => {
   const { user, isLoading, error } = useUser();
-  const [chatHistory, setChatHistory] = useState<string[]>([]);
+  const [chatHistory, setChatHistory] = useState<ChatHistoryItem[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(true);
 
-  // Load history from localStorage
   useEffect(() => {
-    const saved = localStorage.getItem("chatHistory");
-    if (saved) {
-      setChatHistory(JSON.parse(saved));
-    }
-  }, []);
+    const fetchChatHistory = async () => {
+      const { data, error } = await supabase
+        .from("chat_history")
+        .select("*")
+        .order("created_at", { ascending: false });
 
-  // Clear history
-  const clearChatHistory = () => {
-    localStorage.removeItem("chatHistory");
-    setChatHistory([]);
-  };
+        
+      if (error) {
+        console.error("Failed to fetch chat history:", error.message);
+      } else {
+        setChatHistory(data || []);
+      }
+
+      setLoadingHistory(false);
+    };
+
+    fetchChatHistory();
+    const interval = setInterval(()=>{
+      fetchChatHistory();
+
+    }, 5000)
+    return () => clearInterval(interval);
+  }, []);
 
   return (
     <div className="scrollbar-trigger flex h-full w-full flex-1 items-start border-white/20">
@@ -43,17 +63,19 @@ const Sidebar: React.FC = () => {
         {/* Chat History */}
         <div className="flex-col flex-1 overflow-y-auto border-b border-white/20">
           <div className="flex flex-col gap-2 pb-2 text-gray-100 text-sm">
-            {chatHistory.length === 0 ? (
+            {loadingHistory ? (
+              <p className="text-gray-400 px-3">Loading...</p>
+            ) : chatHistory.length === 0 ? (
               <p className="text-gray-400 px-3">No previous conversations</p>
             ) : (
-              chatHistory.map((title, idx) => (
+              chatHistory.map((item) => (
                 <a
-                  key={idx}
+                  key={item.id}
                   className="flex py-3 px-3 items-center gap-3 relative rounded-md hover:bg-[#2A2B32] cursor-pointer break-all group"
                 >
                   <FiMessageSquare className="h-4 w-4" />
                   <div className="flex-1 text-ellipsis max-h-5 overflow-hidden break-all relative">
-                    {title}
+                    {item.prompt.slice(0, 30)}
                     <div className="absolute inset-y-0 right-0 w-8 z-10 bg-gradient-to-l from-gray-900 group-hover:from-[#2A2B32]" />
                   </div>
                 </a>
@@ -78,9 +100,9 @@ const Sidebar: React.FC = () => {
         )}
 
         {/* Actions */}
-        <a onClick={clearChatHistory} className="flex py-3 px-3 items-center gap-3 hover:bg-gray-500/10 text-white text-sm cursor-pointer">
+        <a className="flex py-3 px-3 items-center gap-3 hover:bg-gray-500/10 text-white text-sm cursor-pointer">
           <AiOutlineMessage className="h-4 w-4" />
-          Clear conversations
+          Clear conversations {/* you can later hook this up with Supabase delete logic */}
         </a>
 
         <a className="flex py-3 px-3 items-center gap-3 hover:bg-gray-500/10 text-white text-sm cursor-pointer">

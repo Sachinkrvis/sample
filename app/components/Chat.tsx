@@ -2,12 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import { FiSend } from "react-icons/fi";
-import { BsChevronDown, BsPlusLg } from "react-icons/bs";
+import { BsPlusLg } from "react-icons/bs";
 import { RxHamburgerMenu } from "react-icons/rx";
 import useAnalytics from "../hooks/useAnalytics";
 import useAutoResizeTextArea from "../hooks/useAutoResizeTextArea";
 import Message from "./Message";
 import { DEFAULT_OPENAI_MODEL, OPENAI_MODELS } from "../shared/Constants";
+import { supabase } from "../lib/supabaseClient";
 
 const Chat: React.FC<{ toggleComponentVisibility?: () => void }> = ({ toggleComponentVisibility }) => {
   const [isLoading, setIsLoading] = useState(false);
@@ -19,6 +20,8 @@ const Chat: React.FC<{ toggleComponentVisibility?: () => void }> = ({ toggleComp
   const textAreaRef = useAutoResizeTextArea();
   const bottomOfChatRef = useRef<HTMLDivElement>(null);
   const [selectedModel, setSelectedModel] = useState(DEFAULT_OPENAI_MODEL);
+  const [base64Image, setBase64Image] = useState<string | null>(null);
+  const [imageMimeType, setImageMimeType] = useState<string | null>(null);
 
   useEffect(() => {
     if (textAreaRef.current) {
@@ -33,15 +36,43 @@ const Chat: React.FC<{ toggleComponentVisibility?: () => void }> = ({ toggleComp
     }
   }, [conversation]);
 
-  const getGeminiResponse = async (userMessage: string) => {
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const MAX_IMAGE_SIZE_MB = 5;
+    if (file.size > MAX_IMAGE_SIZE_MB * 1024 * 1024) {
+      setErrorMessage("Image too large. Max 5MB allowed.");
+      return;
+    }
+
+    setErrorMessage("");
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const base64Full = reader.result?.toString(); // includes the prefix
+      if (base64Full) {
+        setBase64Image(base64Full);
+        setImageMimeType(file.type);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const getGeminiResponse = async (
+    userMessage: string,
+    base64Image: string | null,
+    imageMimeType: string | null
+  ) => {
     const res = await fetch("/api/gemini", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         message: userMessage,
-        model: selectedModel.id,
+        base64Image: base64Image ? base64Image.split(",")[1] : null,
+        imageMimeType: imageMimeType || "image/png",
       }),
     });
+
     const data = await res.json();
     return data.reply || "Sorry, I couldn't generate a response.";
   };
@@ -55,7 +86,7 @@ const Chat: React.FC<{ toggleComponentVisibility?: () => void }> = ({ toggleComp
       setErrorMessage("");
     }
 
-    trackEvent("send.message", { message: message });
+    trackEvent("send.message", { message });
     setIsLoading(true);
 
     const userMsg = { content: message, role: "user" as const };
@@ -63,16 +94,32 @@ const Chat: React.FC<{ toggleComponentVisibility?: () => void }> = ({ toggleComp
 
     setConversation((prev) => [...prev, userMsg, thinkingMsg]);
     setMessage("");
+    setBase64Image(null);
     setShowEmptyChat(false);
 
     try {
-      const aiReply = await getGeminiResponse(message);
+      const aiReply = await getGeminiResponse(message, base64Image, imageMimeType);
+      console.log("message:", message);
+      console.log("AI Reply:", aiReply);
+
+      // Save prompt-response to Supabase
+      const { error } = await supabase.from("chat_history").insert([
+        {
+          prompt: message,
+          response: aiReply,
+        },
+      ]).select();
+      if (error) {
+        console.error("Error saving to Supabase:", error.message);
+      }
+
       setConversation((prev) => {
         const updated = [...prev];
         updated[updated.length - 1] = { content: aiReply, role: "system" };
         return updated;
       });
     } catch (err) {
+      console.error("AI reply error:", err);
       setConversation((prev) => {
         const updated = [...prev];
         updated[updated.length - 1] = {
@@ -85,17 +132,6 @@ const Chat: React.FC<{ toggleComponentVisibility?: () => void }> = ({ toggleComp
 
     setIsLoading(false);
   };
-
-  useEffect(() => {
-  if (conversation.length === 2 && message === "") {
-    const firstMessage = conversation[0]?.content?.slice(0, 30) || "Untitled Chat";
-    const existingHistory = JSON.parse(localStorage.getItem("chatHistory") || "[]");
-
-    const updatedHistory = [...existingHistory, firstMessage];
-    localStorage.setItem("chatHistory", JSON.stringify(updatedHistory));
-  }
-}, [conversation]);
-
 
   const handleKeypress = (e: any) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -152,7 +188,7 @@ const Chat: React.FC<{ toggleComponentVisibility?: () => void }> = ({ toggleComp
               ) : (
                 <div className="py-10 relative w-full flex flex-col h-full">
                   <h1 className="text-2xl sm:text-4xl font-semibold text-center text-gray-200 flex gap-2 items-center justify-center h-screen">
-                    ChatGPT-Clone 
+                    ChatGPT-Clone
                   </h1>
                 </div>
               )}
@@ -161,31 +197,93 @@ const Chat: React.FC<{ toggleComponentVisibility?: () => void }> = ({ toggleComp
         </div>
 
         {/* Input Form */}
-        <div className="absolute bottom-0 left-0 w-full border-t dark:border-white/20 bg-white dark:bg-gray-800 pt-2">
-          <form className="mx-2 flex flex-row gap-3 md:mx-4 lg:mx-auto lg:max-w-2xl xl:max-w-3xl" onSubmit={sendMessage}>
-            <div className="relative flex flex-col h-full flex-1 items-stretch md:flex-col">
-              {errorMessage && <div className="mb-2"><span className="text-red-500 text-sm">{errorMessage}</span></div>}
-              <div className="flex flex-col w-full py-2 flex-grow md:py-3 md:pl-4 relative border border-black/10 bg-white dark:bg-gray-700 rounded-md">
-                <textarea
-                  ref={textAreaRef}
-                  value={message}
-                  style={{ height: "24px", maxHeight: "200px", overflowY: "hidden" }}
-                  placeholder="Send a message..."
-                  className="m-0 w-full resize-none border-0 bg-transparent p-0 pr-7 focus:ring-0"
-                  onChange={(e) => setMessage(e.target.value)}
-                  onKeyDown={handleKeypress}
-                />
-                <button disabled={isLoading || message.trim().length === 0} type="submit" className="absolute p-1 rounded-md bottom-1.5 right-1">
-                  <FiSend className="h-4 w-4 text-white" />
-                </button>
-              </div>
-            </div>
-          </form>
+<div className="absolute bottom-0 left-0 w-full border-t dark:border-white/20 bg-white dark:bg-gray-800 pt-2">
+  <form
+    className="mx-2 flex flex-row gap-3 md:mx-4 lg:mx-auto lg:max-w-2xl xl:max-w-3xl items-end"
+    onSubmit={sendMessage}
+  >
+    {/* ➕ Button for image upload */}
+    <div className="flex items-end mb-2">
+      <label
+        htmlFor="imageUpload"
+        className="cursor-pointer p-2 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 transition"
+        title="Upload image"
+      >
+        <BsPlusLg className="text-xl text-gray-600 dark:text-gray-300" />
+      </label>
+      <input
+        id="imageUpload"
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleImageUpload}
+      />
+    </div>
 
-          <div className="px-3 pt-2 pb-3 text-center text-xs text-black/50 dark:text-white/50 md:px-4 md:pt-3 md:pb-6">
-            <span>Chatgpt Clone can generate inaccurate information</span>
-          </div>
+    {/* Text Input */}
+    <div className="relative flex flex-col h-full flex-1 items-stretch">
+      {errorMessage && (
+        <div className="mb-2">
+          <span className="text-red-500 text-sm">{errorMessage}</span>
         </div>
+      )}
+      <div className="flex flex-col w-full py-2 flex-grow md:py-3 md:pl-4 relative border border-black/10 bg-white dark:bg-gray-700 rounded-md">
+        <textarea
+          ref={textAreaRef}
+          value={message}
+          style={{ height: "24px", maxHeight: "200px", overflowY: "hidden" }}
+          placeholder="Send a message..."
+          className="m-0 w-full resize-none border-0 bg-transparent p-0 pr-10 focus:ring-0 text-gray-800 dark:text-white"
+          onChange={(e) => setMessage(e.target.value)}
+          onKeyDown={handleKeypress}
+        />
+
+        {/* Send Button */}
+        <button
+          disabled={isLoading || message.trim().length === 0}
+          type="submit"
+          title="Send message"
+          className={`absolute p-2 rounded-md bottom-2 right-2 transition ${isLoading || message.trim().length === 0
+              ? "bg-gray-400 cursor-not-allowed"
+              : "bg-blue-600 hover:bg-blue-700 cursor-pointer"
+            }`}
+        >
+          <FiSend className="h-5 w-5 text-white" />
+        </button>
+      </div>
+    </div>
+  </form>
+
+  {/* Image Preview Section */}
+  {base64Image && (
+    <div className="mx-4 mt-2 mb-3 lg:mx-auto lg:max-w-2xl xl:max-w-3xl">
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-sm text-gray-600 dark:text-gray-300">Selected image:</span>
+        <button
+          onClick={() => setBase64Image(null)}
+          className="text-xs text-red-500 hover:underline"
+        >
+          Remove
+        </button>
+      </div>
+      {!base64Image ? (
+  <p className="text-sm text-gray-500">Loading image preview...</p>
+) : (
+  <img
+    src={base64Image}
+    alt="Selected"
+    className="w-24 h-24 object-contain border rounded-md"
+  />
+)}
+
+    </div>
+  )}
+
+  <div className="px-3 pt-2 pb-3 text-center text-xs text-black/50 dark:text-white/50 md:px-4 md:pt-3 md:pb-6">
+    <span>ChatGPT Clone can generate inaccurate information</span>
+  </div>
+</div>
+
       </div>
     </div>
   );
